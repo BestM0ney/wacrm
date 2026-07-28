@@ -38,16 +38,24 @@ function LoginPageInner() {
   const inviteToken = searchParams.get("invite");
   const t = useTranslations("LoginPage");
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const supabase = createClient();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
+
+    // Read the credentials off the form element rather than from React
+    // state. iOS Password AutoFill assigns the field values directly
+    // without firing the events a controlled input listens for, so the
+    // state can still be empty while the fields visibly hold the
+    // credentials — sign-in then posted blanks and bounced the user
+    // back to this page. FormData always reflects the live DOM.
+    const fields = new FormData(e.currentTarget);
+    const email = String(fields.get("email") ?? "").trim();
+    const password = String(fields.get("password") ?? "");
 
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -108,10 +116,14 @@ function LoginPageInner() {
               </Label>
               <Input
                 id="email"
+                name="email"
                 type="email"
+                autoComplete="username"
+                inputMode="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 placeholder={t('emailPlaceholder')}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
                 required
                 className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
@@ -131,10 +143,10 @@ function LoginPageInner() {
               </div>
               <Input
                 id="password"
+                name="password"
                 type="password"
+                autoComplete="current-password"
                 placeholder={t('passwordPlaceholder')}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
                 required
                 className="border-border bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-primary/20"
               />
