@@ -15,7 +15,7 @@
     "createAccount": "계정 만들기"
   },
   "Sidebar": {
-    "title": "WhatsApp용 CRM 템플릿",
+    "title": "CRM iPhone Bucaramanga",
     "dashboard": "대시보드",
     "inbox": "인박스",
     "notifications": "알림",
@@ -475,6 +475,14 @@
   },
   "Pipelines": {
     "page": {
+      "seedPipelineName": "영업 파이프라인",
+      "seedStages": {
+        "newLead": "신규 리드",
+        "qualified": "검증됨",
+        "proposalSent": "제안 발송",
+        "negotiation": "협상",
+        "won": "성사"
+      },
       "selectPipeline": "파이프라인 선택",
       "noPipelinesYet": "아직 파이프라인이 없습니다",
       "managePipelines": "파이프라인 관리",
@@ -768,6 +776,28 @@
     }
   },
   "Automations": {
+    "quickstart": {
+      "welcome_message": {
+        "name": "환영 메시지",
+        "description": "처음 연락한 고객에게 인사말로 자동 응답합니다.",
+        "messageText": "안녕하세요! 👋 연락 주셔서 감사합니다. 곧 답변드리겠습니다."
+      },
+      "out_of_office": {
+        "name": "부재중 응답",
+        "description": "업무 시간 외에 자동 응답하여 고객이 기다리지 않도록 합니다.",
+        "messageText": "메시지 감사합니다! 지금은 업무 시간(9시–18시)이 아니어서 내일 아침에 바로 답변드리겠습니다."
+      },
+      "lead_qualifier": {
+        "name": "리드 검증",
+        "description": "검증 질문으로 인바운드 리드를 선별합니다.",
+        "messageText": "좋습니다! 가격 안내를 도와드리겠습니다. 대략 몇 명이 사용하실 예정인가요?"
+      },
+      "follow_up_reminder": {
+        "name": "후속 알림",
+        "description": "24시간 내에 답장이 없는 고객에게 리마인더를 보냅니다.",
+        "messageText": "다시 연락드립니다 — 추가로 궁금한 점이 있으신가요? 기꺼이 도와드리겠습니다!"
+      }
+    },
     "list": {
       "title": "자동화",
       "subtitle": "WhatsApp® 이벤트에 자동으로 반응하는 워크플로를 만드세요.",
@@ -1200,6 +1230,27 @@
   "Settings": {
     "pageTitle": "설정",
     "pageDesc": "계정과 워크스페이스에 관한 모든 것을 한곳에서 관리하세요. 관리할 섹션을 선택하세요.",
+    "quickReplies": {
+      "title": "빠른 답장",
+      "description": "상담원이 받은편지함 작성기에서 삽입할 수 있는 재사용 스니펫 — 일반 텍스트 또는 저장된 인터랙티브 메시지.",
+      "newQuickReply": "새 빠른 답장",
+      "empty": "아직 빠른 답장이 없습니다. 하나 만들어 여러 대화에서 재사용하세요.",
+      "nameRequired": "빠른 답장의 이름을 입력하세요.",
+      "saveError": "빠른 답장을 저장할 수 없습니다.",
+      "updated": "빠른 답장이 수정되었습니다.",
+      "created": "빠른 답장이 생성되었습니다.",
+      "deleteConfirm": "이 빠른 답장을 삭제할까요?",
+      "deleteError": "빠른 답장을 삭제할 수 없습니다.",
+      "dialogEditTitle": "빠른 답장 수정",
+      "dialogNewTitle": "새 빠른 답장",
+      "nameLabel": "이름",
+      "namePlaceholder": "예: 영업시간",
+      "tabText": "텍스트",
+      "tabInteractive": "인터랙티브",
+      "contentPlaceholder": "삽입할 메시지 텍스트",
+      "cancel": "취소",
+      "save": "저장"
+    },
     "overview": {
       "notSetup": "아직 설정되지 않음",
       "connected": "연결됨",
@@ -1598,7 +1649,7 @@
       "nameLabel": "이름",
       "namePlaceholder": "예: Zapier 자동화",
       "scopesLabel": "권한 범위",
-      "scopesHint": "권한 범위가 없는 키도 <code className=\"text-[11px]\">GET /api/v1/me</code>를 호출해 동작을 확인할 수 있습니다.",
+      "scopesHint": "권한 범위가 없는 키도 <code>GET /api/v1/me</code>를 호출해 동작을 확인할 수 있습니다.",
       "cancel": "취소",
       "creating": "만드는 중…",
       "createKey": "키 생성",

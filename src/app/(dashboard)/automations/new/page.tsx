@@ -2,6 +2,7 @@
 
 import { Suspense, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
+import { useTranslations } from "next-intl"
 
 import {
   AutomationBuilder,
@@ -25,6 +26,7 @@ export default function NewAutomationPage() {
 function NewAutomationPageInner() {
   const params = useSearchParams()
   const template = params.get("template") as TemplateSlug | null
+  const tq = useTranslations("Automations.quickstart")
 
   const initial: BuilderInitial = useMemo(() => {
     if (template && AUTOMATION_TEMPLATES[template]) {
@@ -33,14 +35,17 @@ function NewAutomationPageInner() {
         t.steps.map((seed, idx) => ({
           index: idx,
           step_type: seed.step_type,
-          step_config: seed.step_config as Record<string, unknown>,
+          // Seed customer-facing message text in the active locale.
+          step_config: (seed.step_type === "send_message"
+            ? { ...seed.step_config, text: tq(`${template}.messageText`) }
+            : seed.step_config) as Record<string, unknown>,
           branch: seed.branch ?? null,
           parent_index: seed.parent_index ?? null,
         })),
       )
       return {
-        name: t.name,
-        description: t.description,
+        name: tq(`${template}.name`),
+        description: tq(`${template}.description`),
         trigger_type: t.trigger_type,
         trigger_config: t.trigger_config as Record<string, unknown>,
         is_active: false,
@@ -55,7 +60,7 @@ function NewAutomationPageInner() {
       is_active: false,
       steps: [],
     }
-  }, [template])
+  }, [template, tq])
 
   return <AutomationBuilder initial={initial} />
 }
