@@ -21,6 +21,46 @@ import { cn } from "@/lib/utils";
 // across reloads and sessions (device-scoped, like the theme prefs).
 const CONTACT_PANEL_STORAGE_KEY = "wacrm:inbox:contact-panel-open";
 
+/**
+ * Newest activity first — the same order ConversationList's fetch asks
+ * the DB for (`.order("last_message_at", { ascending: false })`).
+ *
+ * Every realtime patch below runs through this. Without it the list kept
+ * whatever order the initial fetch returned: a conversation that had
+ * just received a message stayed wherever it was, so the top of the
+ * inbox showed threads that were minutes stale while newer ones sat
+ * further down. Re-sorting on patch is what makes the live list agree
+ * with what a reload would show.
+ */
+function sortByRecency(list: Conversation[]): Conversation[] {
+  return [...list].sort(
+    (a, b) =>
+      new Date(b.last_message_at ?? 0).getTime() -
+      new Date(a.last_message_at ?? 0).getTime(),
+  );
+}
+
+/**
+ * Preview line for the conversation list, mirroring what the webhook
+ * writes to `conversations.last_message_text` for the same message.
+ *
+ * Media messages (sticker, image, audio, video, document, location)
+ * carry no `content_text`. Falling back to "" made the list render its
+ * `|| t("noMessagesYet")` placeholder, so a thread that had *just*
+ * received a sticker announced itself as having no messages at all —
+ * until a reload replaced it with the `[sticker]` the server had stored
+ * correctly all along.
+ *
+ * Note the server derives its label from WhatsApp's raw `message.type`
+ * while we only have the persisted `content_type`, which maps sticker →
+ * image. A sticker therefore reads `[image]` live and `[sticker]` after
+ * the conversation UPDATE event lands. Both beat a blank row.
+ */
+function previewTextFor(message: Message): string {
+  if (message.content_text) return message.content_text;
+  return message.content_type ? `[${message.content_type}]` : "";
+}
+
 // `useSearchParams` (the `?c=<id>` deep link below) requires a Suspense
 // boundary or the production build bails to CSR and errors out. Thin
 // wrapper supplies it; the inner component holds all the inbox state.
@@ -154,18 +194,33 @@ function InboxPageInner() {
       setConversations((prev) => {
         const existing = prev.find((c) => c.id === fetched.id);
         if (existing) {
-          // Already in state — keep its fields (a realtime UPDATE may
-          // have landed while the fetch was in flight and patched
-          // last_message_text / unread_count to fresher values than
-          // the row we just read). Only backfill `contact`, which the
-          // realtime payloads never carry.
-          return prev.map((c) =>
-            c.id === fetched.id
-              ? { ...c, contact: c.contact ?? fetched.contact }
-              : c,
+          // Already in state. A realtime UPDATE may have landed while
+          // this fetch was in flight, so we can't blindly take the row
+          // we just read — but we can't blindly keep local state
+          // either: that left a preview which realtime had patched
+          // wrongly stuck forever, with no path back to the correct
+          // value the server had stored. Let the timestamp arbitrate,
+          // and always backfill `contact` (realtime never carries the
+          // join).
+          return sortByRecency(
+            prev.map((c) => {
+              if (c.id !== fetched.id) return c;
+              const patched = { ...c, contact: c.contact ?? fetched.contact };
+              const localAt = new Date(c.last_message_at ?? 0).getTime();
+              const fetchedAt = new Date(
+                fetched.last_message_at ?? 0,
+              ).getTime();
+              return fetchedAt >= localAt
+                ? {
+                    ...patched,
+                    last_message_text: fetched.last_message_text,
+                    last_message_at: fetched.last_message_at,
+                  }
+                : patched;
+            }),
           );
         }
-        return [fetched, ...prev];
+        return sortByRecency([fetched, ...prev]);
       });
     } finally {
       hydratingConvIdsRef.current.delete(convId);
@@ -241,18 +296,20 @@ function InboxPageInner() {
         // always read false here.
         if (knownConvIdsRef.current.has(newMsg.conversation_id)) {
           setConversations((prev) =>
-            prev.map((c) =>
-              c.id === newMsg.conversation_id
-                ? {
-                    ...c,
-                    last_message_text: newMsg.content_text ?? "",
-                    last_message_at: newMsg.created_at,
-                    unread_count:
-                      activeConversation?.id === newMsg.conversation_id
-                        ? 0
-                        : c.unread_count + 1,
-                  }
-                : c,
+            sortByRecency(
+              prev.map((c) =>
+                c.id === newMsg.conversation_id
+                  ? {
+                      ...c,
+                      last_message_text: previewTextFor(newMsg),
+                      last_message_at: newMsg.created_at,
+                      unread_count:
+                        activeConversation?.id === newMsg.conversation_id
+                          ? 0
+                          : c.unread_count + 1,
+                    }
+                  : c,
+              ),
             ),
           );
         } else {
@@ -293,7 +350,7 @@ function InboxPageInner() {
         if (!knownConvIdsRef.current.has(conv.id)) {
           setConversations((prev) => {
             if (prev.some((c) => c.id === conv.id)) return prev;
-            return [conv, ...prev];
+            return sortByRecency([conv, ...prev]);
           });
           hydrateConversation(conv.id);
         }
@@ -308,14 +365,16 @@ function InboxPageInner() {
           // UPDATE to round-trip. Non-active convs take the value as-is.
           const isActive = activeConversation?.id === conv.id;
           setConversations((prev) =>
-            prev.map((c) =>
-              c.id === conv.id
-                ? {
-                    ...c,
-                    ...conv,
-                    unread_count: isActive ? 0 : conv.unread_count,
-                  }
-                : c,
+            sortByRecency(
+              prev.map((c) =>
+                c.id === conv.id
+                  ? {
+                      ...c,
+                      ...conv,
+                      unread_count: isActive ? 0 : conv.unread_count,
+                    }
+                  : c,
+              ),
             ),
           );
         } else {
