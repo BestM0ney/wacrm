@@ -39,6 +39,22 @@ export async function middleware(request: NextRequest) {
     supabaseResponse.cookies.getAll().forEach((cookie) => {
       response.cookies.set(cookie)
     })
+    // Every response that leaves this helper is an AUTH DECISION about
+    // one specific visitor's cookies — a redirect to /login, a redirect
+    // to /dashboard, or a 401. A shared cache must never store one.
+    //
+    // Hostinger's CDN was caching the "/dashboard -> /login" redirect
+    // issued for signed-out visitors (the catch-all s-maxage rule in
+    // next.config.ts applied to it). After signing in successfully, the
+    // browser's request for /dashboard was answered by the CDN with
+    // that cached redirect and never reached this middleware, so the
+    // user landed back on /login no matter how many times they tried.
+    // Purging the CDN cache "fixed" it until the next signed-out hit
+    // re-poisoned the entry.
+    response.headers.set(
+      'Cache-Control',
+      'private, no-store, max-age=0, must-revalidate'
+    )
     return response
   }
 

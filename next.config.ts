@@ -63,6 +63,44 @@ const SECURITY_HEADERS = [
   },
 ] as const;
 
+/**
+ * Route segments a shared cache (Hostinger's CDN, any proxy) must never
+ * store, because every response under them depends on who is asking.
+ *
+ * Two distinct hazards, both previously live:
+ *   1. Sign-in loop. The catch-all `s-maxage` rule below used to apply
+ *      to middleware's "/dashboard -> /login" redirect. The CDN cached
+ *      it, then served that redirect to visitors who HAD just signed
+ *      in — login appeared broken until someone purged the cache by
+ *      hand, and the next signed-out request poisoned it again.
+ *   2. Cross-user disclosure. An authenticated dashboard response
+ *      stored under `public` can be handed to a different visitor.
+ *
+ * Keep this list in sync with `protectedPaths` in src/middleware.ts.
+ */
+const NO_STORE_SEGMENTS = [
+  // Authenticated surfaces — every response is per-user.
+  "dashboard",
+  "inbox",
+  "contacts",
+  "pipelines",
+  "broadcasts",
+  "automations",
+  "flows",
+  "agents",
+  "notifications",
+  "settings",
+  // Auth flows: these branch on session state or carry one-time tokens.
+  "login",
+  "signup",
+  "forgot-password",
+  "reset-password",
+  "join",
+  "auth",
+] as const;
+
+const NO_STORE_PATTERN = NO_STORE_SEGMENTS.join("|");
+
 const nextConfig: NextConfig = {
   /**
    * Cross-origin dev access (Next.js 16).
@@ -117,12 +155,13 @@ const nextConfig: NextConfig = {
    *     chunk-hash drift self-heals within ~5 min with no user-
    *     visible latency.
    *
-   *   Note: dynamic dashboard routes (/inbox, /contacts, /pipelines,
-   *   /broadcasts, etc.) are server-rendered per request — Next.js
-   *   and Supabase auth already prevent them from being served
-   *   from a shared cache. The s-maxage here is a ceiling; Next.js
-   *   and auth middleware still set `private` / `no-store` for
-   *   per-user responses.
+   *   - Auth + per-user routes (NO_STORE_SEGMENTS) — `private,
+   *     no-store`. This used to be left to "Next.js and Supabase auth
+   *     already prevent shared caching", which was simply not true:
+   *     the middleware set no cache headers at all, so the catch-all
+   *     rule below marked its sign-in redirects `public` and the CDN
+   *     happily served one visitor's auth decision to everyone. See
+   *     NO_STORE_SEGMENTS above for the full failure mode.
    *
    * Security headers are appended via a separate catch-all rule
    * below — Next.js merges headers from every matching rule, so
@@ -136,7 +175,19 @@ const nextConfig: NextConfig = {
         headers: [{ key: "Cache-Control", value: "no-store" }],
       },
       {
-        source: "/:path((?!_next/static|_next/image|api).*)",
+        // Per-user and auth routes. Listed BEFORE the public rule and
+        // excluded from its matcher, so exactly one Cache-Control rule
+        // ever matches a given path (merged duplicates are ambiguous).
+        source: `/:path(${NO_STORE_PATTERN})/:rest*`,
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "private, no-store, max-age=0, must-revalidate",
+          },
+        ],
+      },
+      {
+        source: `/:path((?!_next/static|_next/image|api|(?:${NO_STORE_PATTERN})(?:/|$)).*)`,
         headers: [
           {
             key: "Cache-Control",
