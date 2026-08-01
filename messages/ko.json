@@ -261,6 +261,9 @@
       "deals": "딜",
       "noTags": "태그 없음",
       "noDeals": "딜 없음",
+      "assignTag": "태그 지정",
+      "tagUpdated": "태그가 업데이트되었습니다",
+      "tagUpdateFailed": "태그를 업데이트할 수 없습니다",
       "addNotePlaceholder": "메모 추가..."
     },
     "aiBanner": {

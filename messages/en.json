@@ -261,6 +261,9 @@
       "deals": "Deals",
       "noTags": "No tags",
       "noDeals": "No deals",
+      "assignTag": "Assign tag",
+      "tagUpdated": "Tag updated",
+      "tagUpdateFailed": "Could not update tag",
       "addNotePlaceholder": "Add a note..."
     },
     "aiBanner": {

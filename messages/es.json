@@ -261,6 +261,9 @@
       "deals": "Negocios",
       "noTags": "Sin etiquetas",
       "noDeals": "Sin negocios",
+      "assignTag": "Asignar etiqueta",
+      "tagUpdated": "Etiqueta actualizada",
+      "tagUpdateFailed": "No se pudo actualizar la etiqueta",
       "addNotePlaceholder": "Agregar una nota..."
     },
     "aiBanner": {

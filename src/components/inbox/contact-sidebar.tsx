@@ -1,23 +1,30 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
-import { cn } from "@/lib/utils";
 import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import { addContactTag, deleteContactTag } from "@/lib/contacts/tag-api";
 import {
   Phone,
   Mail,
   Copy,
   Check,
-  User,
   Tag as TagIcon,
   DollarSign,
   StickyNote,
   Plus,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@/components/ui/select";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
 
@@ -34,8 +41,10 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  const [updatingTagId, setUpdatingTagId] = useState<string | null>(null);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
@@ -43,7 +52,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     const supabase = createClient();
 
     // Fetch deals, notes, and tags in parallel
-    const [dealsRes, notesRes, tagsRes] = await Promise.all([
+    const [dealsRes, notesRes, tagsRes, availableTagsRes] = await Promise.all([
       supabase
         .from("deals")
         .select("*, stage:pipeline_stages(*)")
@@ -58,6 +67,10 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
         .from("contact_tags")
         .select("id, tag_id, tags(*)")
         .eq("contact_id", contact.id),
+      supabase
+        .from("tags")
+        .select("*")
+        .order("name", { ascending: true }),
     ]);
 
     if (dealsRes.data) setDeals(dealsRes.data);
@@ -71,12 +84,12 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
         }));
       setTags(mapped);
     }
+    if (availableTagsRes.data) setAvailableTags(availableTagsRes.data);
   }, [contact]);
 
   // Load on contact change. setContactData/setTags run inside async
   // Supabase callbacks, not synchronously in the effect body.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContactData();
   }, [fetchContactData]);
 
@@ -118,6 +131,55 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     }
     setAddingNote(false);
   }, [contact, newNote, accountId]);
+
+  const handleAssignTag = useCallback(
+    async (nextTagId: string, currentTagId?: string) => {
+      if (!contact || !nextTagId || nextTagId === currentTagId) return;
+
+      setUpdatingTagId(currentTagId ?? "__new__");
+      const previousTags = tags;
+      const nextTag = availableTags.find((tag) => tag.id === nextTagId);
+
+      try {
+        if (currentTagId) {
+          await deleteContactTag(contact.id, currentTagId);
+        }
+
+        const alreadyAssigned = tags.some((tag) => tag.id === nextTagId);
+        if (!alreadyAssigned) {
+          await addContactTag(contact.id, nextTagId);
+        }
+
+        if (nextTag) {
+          setTags((prev) => {
+            const withoutCurrent = currentTagId
+              ? prev.filter((tag) => tag.id !== currentTagId)
+              : prev;
+            return alreadyAssigned
+              ? withoutCurrent
+              : [
+                  ...withoutCurrent,
+                  {
+                    ...nextTag,
+                    contact_tag_id: `manual-${nextTag.id}`,
+                  },
+                ];
+          });
+        }
+
+        await fetchContactData();
+        toast.success(tSidebar("tagUpdated"));
+      } catch (err) {
+        setTags(previousTags);
+        toast.error(
+          err instanceof Error ? err.message : tSidebar("tagUpdateFailed"),
+        );
+      } finally {
+        setUpdatingTagId(null);
+      }
+    },
+    [availableTags, contact, fetchContactData, tags, tSidebar],
+  );
 
   if (!contact) {
     return (
@@ -187,21 +249,73 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               <TagIcon className="h-3 w-3" />
               {tSidebar("tags")}
             </div>
-            <div className="mt-2 flex flex-wrap gap-1">
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {tags.length === 0 ? (
-                <p className="px-1 text-xs text-muted-foreground">{tSidebar("noTags")}</p>
+                <Select
+                  value=""
+                  onValueChange={(nextTagId) => {
+                    if (nextTagId) void handleAssignTag(nextTagId);
+                  }}
+                  disabled={availableTags.length === 0 || updatingTagId !== null}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 w-full justify-between border-border bg-muted px-2 text-xs text-muted-foreground"
+                  >
+                    <span>
+                      {availableTags.length === 0
+                        ? tSidebar("noTags")
+                        : tSidebar("assignTag")}
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent align="start" className="border-border bg-popover">
+                    {availableTags.map((tag) => (
+                      <SelectItem key={tag.id} value={tag.id}>
+                        <span
+                          className="size-2 rounded-full"
+                          style={{ backgroundColor: tag.color }}
+                        />
+                        {tag.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               ) : (
                 tags.map((tag) => (
-                  <span
+                  <Select
                     key={tag.contact_tag_id}
-                    className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                    style={{
-                      backgroundColor: `${tag.color}20`,
-                      color: tag.color,
+                    value={tag.id}
+                    onValueChange={(nextTagId) => {
+                      if (nextTagId) void handleAssignTag(nextTagId, tag.id);
                     }}
+                    disabled={availableTags.length === 0 || updatingTagId !== null}
                   >
-                    {tag.name}
-                  </span>
+                    <SelectTrigger
+                      size="sm"
+                      className="h-6 w-auto gap-1.5 rounded-full border-transparent px-2 py-0 text-[10px] font-medium hover:border-border"
+                      style={{
+                        backgroundColor: `${tag.color}20`,
+                        color: tag.color,
+                      }}
+                    >
+                      {updatingTagId === tag.id ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <span className="max-w-32 truncate">{tag.name}</span>
+                      )}
+                    </SelectTrigger>
+                    <SelectContent align="start" className="border-border bg-popover">
+                      {availableTags.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          <span
+                            className="size-2 rounded-full"
+                            style={{ backgroundColor: option.color }}
+                          />
+                          {option.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 ))
               )}
             </div>
