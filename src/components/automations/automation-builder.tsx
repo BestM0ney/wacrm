@@ -1075,12 +1075,30 @@ function StepRenderer({
   parentPath: StepPath
 } & Omit<StepListProps, "steps" | "parentPath">) {
   const t = useTranslations("Automations.builder")
-  const path: StepPath = [
-    ...parentPath,
+  // ConditionBranches appends a placeholder branch segment to parentPath
+  // (index 0, "replaced per child during walks") and StepList derives
+  // parentScope from it. That placeholder IS this step's own segment, so
+  // it must be REPLACED with the real index — not appended to.
+  //
+  // Appending produced a path with the branch segment duplicated:
+  //   [{root,0}, {branch,c,"yes",0}, {branch,c,"yes",2}]
+  // Every walker (mapAtPath / removeAt / moveAt) consumes one segment
+  // per nesting level, so the extra copy sent them a level too deep —
+  // into branches that a plain action step doesn't have. Editing,
+  // deleting and reordering all silently did nothing inside a branch.
+  const tail: StepPath[number] =
     parentScope.kind === "root"
       ? { kind: "root", index }
-      : { kind: "branch", parentCid: parentScope.parentCid, branch: parentScope.branch, index },
-  ]
+      : {
+          kind: "branch",
+          parentCid: parentScope.parentCid,
+          branch: parentScope.branch,
+          index,
+        }
+  const path: StepPath =
+    parentScope.kind === "root"
+      ? [...parentPath, tail]
+      : [...parentPath.slice(0, -1), tail]
   const meta = STEP_META[step.step_type]
   const Icon = meta.icon
   const expanded = props.expandedId === step.cid
@@ -1154,7 +1172,13 @@ function StepRenderer({
                   onClick={() => props.deleteStepAt(path)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  {t("delete", { defaultValue: "Delete" })}
+                  {/* No `defaultValue` fallback here: next-intl's second
+                      argument is ICU values, not a default string (that's
+                      react-i18next's API). It silently did nothing, so a
+                      missing key surfaced as the raw key path plus a
+                      MISSING_MESSAGE error on every render. The key now
+                      exists in every catalog instead. */}
+                  {t("delete")}
                 </Button>
               </div>
             </div>
@@ -1502,7 +1526,7 @@ function StepEditor({
     case "close_conversation":
       return (
         <p className="text-xs text-muted-foreground">
-          {t("config.closeConversationHint", { defaultValue: "Sets the conversation status to \"closed\". No configuration needed." })}
+          {t("config.closeConversationHint")}
         </p>
       )
     default:

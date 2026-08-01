@@ -962,6 +962,7 @@
         "no": "No"
       },
       "addStep": "Agregar paso",
+      "delete": "Eliminar",
       "config": {
         "messageText": "Texto del mensaje",
         "placeholderMessageText": "¡Hola! Gracias por escribirnos…",
