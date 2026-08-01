@@ -33,6 +33,75 @@ async function expectSendError(
   );
 }
 
+/**
+ * A db that serves one conversation with the given contact, and has no
+ * whatsapp_config. Recipient resolution runs BEFORE the config lookup,
+ * so "WhatsApp not configured" is the signal that a recipient was
+ * accepted — anything rejected fails earlier with its own message.
+ */
+function dbWithContact(contact: Record<string, unknown>): SupabaseClient {
+  const chain = (result: unknown) => {
+    const api: Record<string, unknown> = {
+      select: () => api,
+      eq: () => api,
+      single: async () => result,
+      maybeSingle: async () => result,
+    };
+    return api;
+  };
+  return {
+    from(table: string) {
+      if (table === 'conversations') {
+        return chain({ data: { id: 'cv-1', contact }, error: null });
+      }
+      return chain({ data: null, error: { message: 'not found' } });
+    },
+  } as unknown as SupabaseClient;
+}
+
+describe('sendMessageToConversation — recipient resolution', () => {
+  const params: SendMessageParams = {
+    conversationId: 'cv-1',
+    messageType: 'text',
+    contentText: 'hola',
+  };
+
+  it('accepts a contact that has only a wa_id (WhatsApp username sender)', async () => {
+    // The regression this guards: a customer who reaches us through a
+    // username has no dialable number, and the send used to abort with
+    // "Contact phone number not found" — leaving them unanswerable.
+    const db = dbWithContact({ id: 'c-1', phone: '', wa_id: 'u.diego.garrido' });
+    await expect(
+      sendMessageToConversation(db, 'acct-1', params)
+    ).rejects.toThrow(/WhatsApp not configured/);
+  });
+
+  it('still prefers a usable phone number when the contact has one', async () => {
+    const db = dbWithContact({
+      id: 'c-2',
+      phone: '+57 300 1234567',
+      wa_id: '573001234567',
+    });
+    await expect(
+      sendMessageToConversation(db, 'acct-1', params)
+    ).rejects.toThrow(/WhatsApp not configured/);
+  });
+
+  it('rejects a contact with neither a phone nor a wa_id', async () => {
+    const db = dbWithContact({ id: 'c-3', phone: '', wa_id: null });
+    await expect(
+      sendMessageToConversation(db, 'acct-1', params)
+    ).rejects.toThrow(/no phone number or WhatsApp ID/);
+  });
+
+  it('rejects a malformed phone when there is no wa_id to fall back on', async () => {
+    const db = dbWithContact({ id: 'c-4', phone: '12', wa_id: null });
+    await expect(
+      sendMessageToConversation(db, 'acct-1', params)
+    ).rejects.toThrow(/Invalid phone number format/);
+  });
+});
+
 describe('sendMessageToConversation — param validation (pre-DB)', () => {
   const base = { conversationId: 'cv-1' };
 

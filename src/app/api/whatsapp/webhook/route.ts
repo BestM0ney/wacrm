@@ -2,7 +2,10 @@ import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
-import { normalizePhone } from '@/lib/whatsapp/phone-utils'
+import {
+  looksLikePhoneIdentity,
+  normalizePhone,
+} from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
@@ -557,6 +560,54 @@ async function handleReaction(
   }
 }
 
+/**
+ * Phase-1 diagnostic for WhatsApp's username rollout.
+ *
+ * A sender who reaches us via a username instead of a visible number
+ * arrives with an identifier that `normalizePhone` reduces to an empty
+ * string, so the contact is created without a usable number and replies
+ * fail with "Contact phone number not found". Today that happens
+ * silently — nothing in the logs says which field carried the identity
+ * or what shape it had.
+ *
+ * This logs the identity envelope (and, crucially, the *key names*
+ * present on the payload, which is how we spot fields Meta added) so
+ * the contact model can be reworked against observed payloads rather
+ * than guesswork. Message bodies are deliberately NOT logged: the
+ * routing identity is all we need, and inbound text is customer data.
+ *
+ * Read-only — this changes no behaviour.
+ */
+function logUnrecognizedSenderIdentity(
+  message: WhatsAppMessage,
+  contact: { profile?: { name?: string }; wa_id?: string },
+) {
+  const from = message.from ?? ''
+  const waId = contact?.wa_id ?? ''
+  if (looksLikePhoneIdentity(from) && looksLikePhoneIdentity(waId)) return
+
+  console.warn(
+    '[webhook] NON-PHONE SENDER IDENTITY — likely a WhatsApp username. ' +
+      'Replies to this contact will fail until the contact model routes ' +
+      'on wa_id instead of phone. Payload shape:',
+    JSON.stringify({
+      message_from: from,
+      message_from_looks_like_phone: looksLikePhoneIdentity(from),
+      contact_wa_id: waId,
+      contact_wa_id_looks_like_phone: looksLikePhoneIdentity(waId),
+      // Normalising is what destroys a username — show the damage.
+      normalized_from: normalizePhone(from),
+      // Key names are the payload: a field Meta added for usernames
+      // shows up here even though we don't know to look for it.
+      contact_keys: Object.keys(contact ?? {}),
+      contact_profile_keys: Object.keys(contact?.profile ?? {}),
+      message_keys: Object.keys(message ?? {}),
+      message_type: message.type,
+      message_id: message.id,
+    }),
+  )
+}
+
 async function processMessage(
   message: WhatsAppMessage,
   contact: { profile: { name: string }; wa_id: string },
@@ -570,6 +621,17 @@ async function processMessage(
   configOwnerUserId: string,
   accessToken: string
 ) {
+  // Surfaces username-based senders in the logs so an operator can see
+  // which contacts arrived without a dialable number.
+  logUnrecognizedSenderIdentity(message, contact)
+
+  // The routing identity, stored verbatim. NEVER normalize this: for a
+  // username-based sender `normalizePhone` reduces it to '', which is
+  // what produced unreachable "phantom" contacts. `wa_id` is the field
+  // Meta routes on and the one `to` accepts when sending.
+  const waId = (contact.wa_id || message.from || '').trim()
+  // The phone is now a display/search attribute. Empty for senders who
+  // never exposed a number — that's expected, not an error.
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
 
@@ -578,7 +640,8 @@ async function processMessage(
     accountId,
     configOwnerUserId,
     senderPhone,
-    contactName
+    contactName,
+    waId
   )
   if (!contactOutcome) return
   const contactRecord = contactOutcome.contact
@@ -981,31 +1044,84 @@ interface ContactOutcome {
   wasCreated: boolean
 }
 
+/**
+ * Resolve an existing contact by its WhatsApp routing identity.
+ *
+ * This is the only lookup that works for a sender with no dialable
+ * number. Matching on phone can't help there: `findExistingContact`
+ * bails on an empty phone, which is why every message from a
+ * username-based sender used to mint a brand-new contact and thread.
+ */
+async function findContactByWaId(
+  accountId: string,
+  waId: string,
+): Promise<ContactRow | null> {
+  if (!waId) return null
+  const { data, error } = await supabaseAdmin()
+    .from('contacts')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('wa_id', waId)
+    .maybeSingle()
+  if (error) {
+    console.error('Error looking up contact by wa_id:', error)
+    return null
+  }
+  return (data as ContactRow | null) ?? null
+}
+
 async function findOrCreateContact(
   accountId: string,
   configOwnerUserId: string,
   phone: string,
-  name: string
+  name: string,
+  waId: string
 ): Promise<ContactOutcome | null> {
-  // Find an existing contact for this account by phone. The shared
-  // helper pre-filters in SQL by the last-8-digit suffix (so we don't
-  // pull every contact on every inbound message) then applies the
-  // strict `phonesMatch` in JS on the small candidate set. The same
-  // helper backs the manual contact form and CSV import, so all three
-  // paths agree on what "same number" means (issue #212).
-  const existingContact = await findExistingContact(
-    supabaseAdmin(),
+  // 1) By WhatsApp identity. Tried first because it's exact and works
+  //    for senders with no number at all.
+  let existingContact: ContactRow | null = await findContactByWaId(
     accountId,
-    phone,
+    waId,
   )
 
+  // 2) By phone. Still needed: contacts added by hand or via CSV
+  //    import have no wa_id yet, and every contact created before
+  //    migration 037 is in that state. The shared helper pre-filters in
+  //    SQL by the last-8-digit suffix (so we don't pull every contact
+  //    on every inbound message) then applies the strict `phonesMatch`
+  //    in JS on the small candidate set. The same helper backs the
+  //    manual contact form and CSV import, so all three paths agree on
+  //    what "same number" means (issue #212).
+  if (!existingContact) {
+    existingContact = await findExistingContact(
+      supabaseAdmin(),
+      accountId,
+      phone,
+    )
+  }
+
   if (existingContact) {
+    const patch: Record<string, unknown> = {}
     // Update name if it changed
-    if (name && name !== existingContact.name) {
-      await supabaseAdmin()
+    if (name && name !== existingContact.name) patch.name = name
+    // Backfill the identity onto contacts matched by phone, so the next
+    // message resolves through the exact lookup above. This is also
+    // what upgrades pre-037 rows in place, one message at a time.
+    if (waId && !existingContact.wa_id) patch.wa_id = waId
+
+    if (Object.keys(patch).length > 0) {
+      patch.updated_at = new Date().toISOString()
+      const { error: patchError } = await supabaseAdmin()
         .from('contacts')
-        .update({ name, updated_at: new Date().toISOString() })
+        .update(patch)
         .eq('id', existingContact.id)
+      // A unique-violation here means another account row already owns
+      // this wa_id — log it rather than dropping the message.
+      if (patchError) {
+        console.error('Error updating contact identity:', patchError)
+      } else {
+        existingContact = { ...existingContact, ...patch } as ContactRow
+      }
     }
     return { contact: existingContact, wasCreated: false }
   }
@@ -1020,18 +1136,25 @@ async function findOrCreateContact(
       account_id: accountId,
       user_id: configOwnerUserId,
       phone,
-      name: name || phone,
+      wa_id: waId || null,
+      // `phone` is '' for a username-based sender, so fall back to the
+      // identity rather than labelling the contact with an empty string.
+      name: name || phone || waId,
     })
     .select()
     .single()
 
   if (createError) {
     // Lost a race: a concurrent inbound delivery (or another path)
-    // created this contact between our lookup and insert, and the
-    // unique index (migration 022) rejected the duplicate. Re-resolve
-    // the existing row instead of dropping the message.
+    // created this contact between our lookup and insert, and a unique
+    // index (migration 022 on phone, 037 on wa_id) rejected the
+    // duplicate. Re-resolve the existing row instead of dropping the
+    // message — checking both keys, since either index could have
+    // fired.
     if (isUniqueViolation(createError)) {
-      const raced = await findExistingContact(supabaseAdmin(), accountId, phone)
+      const raced =
+        (await findContactByWaId(accountId, waId)) ??
+        (await findExistingContact(supabaseAdmin(), accountId, phone))
       if (raced) return { contact: raced, wasCreated: false }
     }
     console.error('Error creating contact:', createError)

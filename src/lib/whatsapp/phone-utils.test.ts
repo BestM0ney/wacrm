@@ -2,11 +2,51 @@ import { describe, expect, it } from "vitest";
 import {
   isRecipientNotAllowedError,
   isValidE164,
+  looksLikePhoneIdentity,
   normalizePhone,
   phoneVariants,
   phonesMatch,
   sanitizePhoneForMeta,
 } from "./phone-utils";
+
+describe("looksLikePhoneIdentity", () => {
+  it("accepts the numeric wa_id values Meta has always sent", () => {
+    expect(looksLikePhoneIdentity("573001234567")).toBe(true);
+    expect(looksLikePhoneIdentity("37063949836")).toBe(true);
+    // Formatting characters a real number can carry.
+    expect(looksLikePhoneIdentity("+1 (415) 555-1212")).toBe(true);
+  });
+
+  it("rejects username-style identifiers", () => {
+    // The case this predicate exists for: WhatsApp usernames survive
+    // the webhook but `normalizePhone` reduces them to nothing, so the
+    // contact ends up with no reachable number.
+    expect(looksLikePhoneIdentity("diego.garrido")).toBe(false);
+    expect(looksLikePhoneIdentity("iphonebga")).toBe(false);
+    expect(looksLikePhoneIdentity("user_1234567")).toBe(false);
+    // A username that is mostly digits still has a non-phone character.
+    expect(looksLikePhoneIdentity("573001234567a")).toBe(false);
+  });
+
+  it("rejects empty and out-of-range digit counts", () => {
+    expect(looksLikePhoneIdentity("")).toBe(false);
+    // Below the E.164 minimum.
+    expect(looksLikePhoneIdentity("12345")).toBe(false);
+    // Above the E.164 maximum.
+    expect(looksLikePhoneIdentity("1234567890123456")).toBe(false);
+  });
+
+  it("agrees with normalizePhone on what it can preserve", () => {
+    // Anything this predicate accepts must survive normalization with
+    // digits intact — that invariant is the whole point.
+    for (const id of ["573001234567", "+1 (415) 555-1212", "37063949836"]) {
+      expect(looksLikePhoneIdentity(id)).toBe(true);
+      expect(normalizePhone(id).length).toBeGreaterThanOrEqual(7);
+    }
+    // And anything it rejects as a username normalizes to junk.
+    expect(normalizePhone("diego.garrido")).toBe("");
+  });
+});
 
 describe("sanitizePhoneForMeta", () => {
   it("strips +, spaces, and dashes leaving only digits", () => {

@@ -18,6 +18,34 @@ export function normalizePhone(phone: string): string {
 }
 
 /**
+ * True when a WhatsApp sender identifier still looks like a dialable
+ * phone number.
+ *
+ * Every identity in this codebase is funnelled through
+ * `normalizePhone`, which strips non-digits. That is lossless for a
+ * classic numeric `wa_id` ("573001234567") and destructive for anything
+ * else: WhatsApp's username rollout means a sender can reach us without
+ * exposing a number, and stripping non-digits turns that identifier
+ * into an empty string. The contact is then created with no usable
+ * number, so replies have nowhere to go.
+ *
+ * This predicate does not fix that — it only lets the webhook notice
+ * and log the case, so we can see the real payload shape Meta sends
+ * before reworking the contact model around a non-phone identity.
+ *
+ * Deliberately permissive: only formatting characters a real number
+ * could carry (+, spaces, dashes, parens) are tolerated, and the digit
+ * count must fall in the E.164 range.
+ */
+export function looksLikePhoneIdentity(identifier: string): boolean {
+  if (!identifier) return false
+  // Any character that could not appear in a formatted phone number.
+  if (/[^\d+\-\s()]/.test(identifier)) return false
+  const digits = identifier.replace(/\D/g, '')
+  return digits.length >= 7 && digits.length <= 15
+}
+
+/**
  * Compare two phone numbers accounting for trunk prefix differences.
  * e.g. "370063949836" (with trunk 0) matches "37063949836" (without trunk 0)
  * by comparing the last 8 digits.

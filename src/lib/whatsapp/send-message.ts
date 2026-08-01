@@ -230,22 +230,35 @@ export async function sendMessageToConversation(
   }
 
   const contact = conversation.contact;
-  if (!contact?.phone) {
+
+  /**
+   * Recipient resolution.
+   *
+   * A dialable number is preferred — the variant retry further down
+   * exists to paper over trunk-prefix differences and only makes sense
+   * for real phone numbers. But WhatsApp usernames mean a customer can
+   * reach us without exposing one, and those contacts carry only a
+   * `wa_id` (migration 037). Meta's `to` field takes a WhatsApp ID just
+   * as happily as a phone number, so route on whichever we have.
+   *
+   * Before this, an empty phone meant a hard "Contact phone number not
+   * found" and there was no way to answer such a customer at all.
+   */
+  const sanitizedPhone = sanitizePhoneForMeta(contact?.phone ?? '');
+  const hasUsablePhone = isValidE164(sanitizedPhone);
+  const waId = String(contact?.wa_id ?? '').trim();
+
+  if (!hasUsablePhone && !waId) {
     throw new SendMessageError(
       'bad_request',
-      'Contact phone number not found',
+      contact?.phone
+        ? 'Invalid phone number format'
+        : 'Contact has no phone number or WhatsApp ID',
       400
     );
   }
 
-  const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
-  if (!isValidE164(sanitizedPhone)) {
-    throw new SendMessageError(
-      'bad_request',
-      'Invalid phone number format',
-      400
-    );
-  }
+  const recipient = hasUsablePhone ? sanitizedPhone : waId;
 
   // WhatsApp config, account-scoped.
   const { data: config, error: configError } = await db
@@ -399,9 +412,12 @@ export async function sendMessageToConversation(
   // with "recipient not in allowed list"; persist a working variant
   // back to the contact so the next send goes straight through.
   let waMessageId = '';
-  let workingPhone = sanitizedPhone;
+  let workingPhone = recipient;
   try {
-    const variants = phoneVariants(sanitizedPhone);
+    // Variants are trunk-prefix permutations of a phone number. A
+    // wa_id is an opaque identifier — permuting its digits would just
+    // address a different person — so it gets exactly one attempt.
+    const variants = hasUsablePhone ? phoneVariants(sanitizedPhone) : [waId];
     let lastError: unknown = null;
 
     for (const variant of variants) {
@@ -430,7 +446,10 @@ export async function sendMessageToConversation(
     throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
   }
 
-  if (workingPhone !== sanitizedPhone) {
+  // Only persist a corrected PHONE. On the wa_id path there is a single
+  // attempt and nothing to correct — and writing the identifier into
+  // `phone` would fabricate a number that was never real.
+  if (hasUsablePhone && workingPhone !== sanitizedPhone) {
     console.log(
       `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
     );
