@@ -1425,7 +1425,13 @@ function StepEditor({
           <FieldBlock label={t("config.subjectLabel")}>
             <select
               value={(cfg.subject as string) ?? "tag_presence"}
-              onChange={(e) => set({ subject: e.target.value })}
+              // Clear the operand: its meaning is entirely subject-
+              // dependent (a tag UUID, a column name, a time range), so
+              // carrying a value across a subject change always leaves
+              // the condition misconfigured — and now that tag_presence
+              // renders a dropdown, a stale UUID would silently show up
+              // as free text under the next subject.
+              onChange={(e) => set({ subject: e.target.value, operand: "" })}
               className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
             >
               <option value="tag_presence">{t("config.subjects.tag_presence")}</option>
@@ -1435,20 +1441,33 @@ function StepEditor({
             </select>
           </FieldBlock>
           <FieldBlock label={t("config.operandLabel")}>
-            <Input
-              placeholder={
-                cfg.subject === "time_of_day"
-                  ? t("config.placeholderTime")
-                  : cfg.subject === "contact_field"
-                  ? t("config.placeholderContact")
-                  : cfg.subject === "tag_presence"
-                  ? t("config.placeholderTag")
-                  : ""
-              }
-              value={(cfg.operand as string) ?? ""}
-              onChange={(e) => set({ operand: e.target.value })}
-              className="bg-muted text-foreground"
-            />
+            {/* The engine matches `operand` against contact_tags.tag_id
+                exactly, so this field has always held a tag UUID — but it
+                was a free-text input, leaving no way to fill it without
+                querying the database by hand. Reuse the same picker the
+                Add/Remove Tag steps use: choose by name, store the id.
+                It also preserves an id whose tag was since deleted, so
+                editing an old automation can't silently drop it. */}
+            {cfg.subject === "tag_presence" ? (
+              <TagSelect
+                value={(cfg.operand as string) ?? ""}
+                onChange={(v) => set({ operand: v })}
+                t={t}
+              />
+            ) : (
+              <Input
+                placeholder={
+                  cfg.subject === "time_of_day"
+                    ? t("config.placeholderTime")
+                    : cfg.subject === "contact_field"
+                    ? t("config.placeholderContact")
+                    : ""
+                }
+                value={(cfg.operand as string) ?? ""}
+                onChange={(e) => set({ operand: e.target.value })}
+                className="bg-muted text-foreground"
+              />
+            )}
           </FieldBlock>
           {(cfg.subject === "contact_field" || cfg.subject === "message_content") && (
             <FieldBlock label="Value">
