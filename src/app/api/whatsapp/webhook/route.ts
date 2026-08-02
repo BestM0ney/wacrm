@@ -36,9 +36,37 @@ function supabaseAdmin() {
   return _adminClient
 }
 
+/**
+ * The `contacts[]` entry Meta sends alongside inbound messages.
+ *
+ * Both identity spellings are optional because which one arrives
+ * depends on the sender: a classic sender carries `wa_id` (the phone
+ * number), a username-based sender carries `user_id` (an opaque id like
+ * "CO.1864288164544096"). Never assume either is present.
+ */
+type WhatsAppInboundContact = {
+  profile: { name: string; username?: string }
+  wa_id?: string
+  user_id?: string
+}
+
 interface WhatsAppMessage {
   id: string
-  from: string
+  /**
+   * The sender's phone number — present only for classic senders.
+   *
+   * Optional since WhatsApp's username rollout: a customer who messages
+   * from a username has no number to disclose, and Meta omits this field
+   * entirely, sending `from_user_id` instead. Observed payload:
+   *   { from_user_id, id, timestamp, text, type }   ← no `from`
+   */
+  from?: string
+  /**
+   * Opaque sender identity used when `from` is absent, e.g.
+   * "CO.1864288164544096". This is the routing identity for a
+   * username-based sender.
+   */
+  from_user_id?: string
   timestamp: string
   type: string
   text?: { body: string }
@@ -73,10 +101,7 @@ interface WhatsAppWebhookEntry {
         display_phone_number: string
         phone_number_id: string
       }
-      contacts?: Array<{
-        profile: { name: string }
-        wa_id: string
-      }>
+      contacts?: WhatsAppInboundContact[]
       messages?: WhatsAppMessage[]
       statuses?: Array<{
         id: string
@@ -615,25 +640,44 @@ async function handleReaction(
  */
 function logUnrecognizedSenderIdentity(
   message: WhatsAppMessage,
-  contact: { profile?: { name?: string }; wa_id?: string },
+  contact: {
+    profile?: { name?: string; username?: string }
+    wa_id?: string
+    user_id?: string
+  },
 ) {
   const from = message.from ?? ''
   const waId = contact?.wa_id ?? ''
   if (looksLikePhoneIdentity(from) && looksLikePhoneIdentity(waId)) return
 
+  // Resolved identity — empty here means the sender is unreachable and
+  // a phantom contact is about to be created.
+  const resolved = (
+    contact?.wa_id ||
+    contact?.user_id ||
+    message.from ||
+    message.from_user_id ||
+    ''
+  ).trim()
+
   console.warn(
-    '[webhook] NON-PHONE SENDER IDENTITY — likely a WhatsApp username. ' +
-      'Replies to this contact will fail until the contact model routes ' +
-      'on wa_id instead of phone. Payload shape:',
+    '[webhook] NON-PHONE SENDER IDENTITY — WhatsApp username sender. ' +
+      (resolved
+        ? 'Routing on the opaque identity below.'
+        : 'NO IDENTITY RESOLVED — this contact will be unreachable.') +
+      ' Payload shape:',
     JSON.stringify({
-      message_from: from,
-      message_from_looks_like_phone: looksLikePhoneIdentity(from),
+      resolved_identity: resolved,
+      username: contact?.profile?.username ?? null,
+      // Both field spellings, so a future rename is obvious in the log.
       contact_wa_id: waId,
-      contact_wa_id_looks_like_phone: looksLikePhoneIdentity(waId),
+      contact_user_id: contact?.user_id ?? '',
+      message_from: from,
+      message_from_user_id: message.from_user_id ?? '',
       // Normalising is what destroys a username — show the damage.
       normalized_from: normalizePhone(from),
-      // Key names are the payload: a field Meta added for usernames
-      // shows up here even though we don't know to look for it.
+      // Key names are the payload: a field Meta added shows up here even
+      // though we don't know to look for it.
       contact_keys: Object.keys(contact ?? {}),
       contact_profile_keys: Object.keys(contact?.profile ?? {}),
       message_keys: Object.keys(message ?? {}),
@@ -645,7 +689,7 @@ function logUnrecognizedSenderIdentity(
 
 async function processMessage(
   message: WhatsAppMessage,
-  contact: { profile: { name: string }; wa_id: string },
+  contact: WhatsAppInboundContact,
   // Tenancy. Resolved from the matched whatsapp_config row; every
   // contact / conversation / message row created downstream is
   // stamped with this so any member of the account can see it.
@@ -662,13 +706,28 @@ async function processMessage(
 
   // The routing identity, stored verbatim. NEVER normalize this: for a
   // username-based sender `normalizePhone` reduces it to '', which is
-  // what produced unreachable "phantom" contacts. `wa_id` is the field
-  // Meta routes on and the one `to` accepts when sending.
-  const waId = (contact.wa_id || message.from || '').trim()
+  // what produced unreachable "phantom" contacts.
+  //
+  // Meta sends this under two different field names depending on the
+  // sender. Classic senders carry `wa_id` / `from` (the phone number).
+  // Username senders carry `user_id` / `from_user_id` — an opaque id
+  // like "CO.1864288164544096" — and omit the phone fields entirely.
+  // Read all four so either shape resolves.
+  const waId = (
+    contact.wa_id ||
+    contact.user_id ||
+    message.from ||
+    message.from_user_id ||
+    ''
+  ).trim()
   // The phone is now a display/search attribute. Empty for senders who
   // never exposed a number — that's expected, not an error.
-  const senderPhone = normalizePhone(message.from)
-  const contactName = contact.profile.name
+  const senderPhone = normalizePhone(message.from ?? '')
+  // Prefer the display name; fall back to the @username, then to the
+  // identity, so a contact is never labelled with an empty string.
+  const contactName =
+    contact.profile?.name ||
+    (contact.profile?.username ? `@${contact.profile.username}` : '')
 
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
