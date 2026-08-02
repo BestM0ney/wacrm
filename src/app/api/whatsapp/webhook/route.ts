@@ -108,6 +108,15 @@ interface WhatsAppWebhookEntry {
         status: string
         timestamp: string
         recipient_id: string
+        // Delivery failure detail. Meta only reports it here — the send
+        // call itself already returned 200 — so dropping this field made
+        // undeliverable messages indistinguishable from delivered ones.
+        errors?: Array<{
+          code?: number
+          title?: string
+          message?: string
+          error_data?: { details?: string }
+        }>
       }>
     }
     field: string
@@ -417,7 +426,33 @@ async function handleStatusUpdate(status: {
   status: string
   timestamp: string
   recipient_id: string
+  /**
+   * Present when Meta could not deliver. This is the ONLY place the
+   * reason surfaces: the send itself returns 200 with a message id
+   * (Meta accepted the request), and the failure arrives asynchronously
+   * here. Previously this field wasn't even read, so undeliverable
+   * messages looked successful in the CRM and silently never arrived.
+   */
+  errors?: Array<{
+    code?: number
+    title?: string
+    message?: string
+    error_data?: { details?: string }
+  }>
 }) {
+  // Surface delivery failures loudly — they're invisible everywhere else.
+  if (status.status === 'failed' || status.errors?.length) {
+    console.error(
+      '[webhook] MESSAGE DELIVERY FAILED — Meta accepted the send but ' +
+        'could not deliver it. Reason:',
+      JSON.stringify({
+        message_id: status.id,
+        recipient_id: status.recipient_id,
+        status: status.status,
+        errors: status.errors ?? [],
+      }),
+    )
+  }
   // 1) Mirror onto messages (legacy behavior) — Meta's status values
   //    already match the CHECK constraint on messages.status. No
   //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
