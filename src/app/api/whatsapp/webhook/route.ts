@@ -224,7 +224,15 @@ export async function GET(request: Request) {
  * can't use it to flood the log.
  */
 function logRawWebhookPayload(rawBody: string) {
-  if (process.env.WHATSAPP_WEBHOOK_DEBUG !== 'true') return
+  // Accept the spellings an operator actually types. An exact match on
+  // lowercase 'true' silently did nothing when the value was entered as
+  // "TRUE" in a hosting panel — the flag looked set, no payloads were
+  // logged, and there was no way to tell the difference from "no
+  // webhooks arriving".
+  const flag = process.env.WHATSAPP_WEBHOOK_DEBUG?.trim().toLowerCase()
+  if (flag !== 'true' && flag !== '1' && flag !== 'yes' && flag !== 'on') {
+    return
+  }
   let pretty = rawBody
   try {
     pretty = JSON.stringify(JSON.parse(rawBody), null, 2)

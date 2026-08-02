@@ -46,6 +46,26 @@ export function looksLikePhoneIdentity(identifier: string): boolean {
 }
 
 /**
+ * True when an identifier is a WhatsApp Business-Scoped User ID (BSUID)
+ * rather than a phone number.
+ *
+ * Meta's username rollout replaced the phone number with a BSUID for
+ * users who hide their number. Format (per Meta's BSUID docs): an ISO
+ * 3166 alpha-2 country code, a period, then up to 128 alphanumeric
+ * characters — e.g. "CO.1864288164544096". Businesses enrolled in
+ * parent BSUIDs get an extra "ENT." segment, e.g.
+ * "US.ENT.11815799212886844830".
+ *
+ * This matters because the Messages API takes a BSUID in a DIFFERENT
+ * field than a phone number: `recipient`, not `to`. Passing a BSUID as
+ * `to` is rejected with error 131009 ("Parameter value is not valid").
+ */
+export function isBusinessScopedUserId(identifier: string): boolean {
+  if (!identifier) return false
+  return /^[A-Za-z]{2}\.(ENT\.)?[A-Za-z0-9]{1,128}$/.test(identifier.trim())
+}
+
+/**
  * Compare two phone numbers accounting for trunk prefix differences.
  * e.g. "370063949836" (with trunk 0) matches "37063949836" (without trunk 0)
  * by comparing the last 8 digits.

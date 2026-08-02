@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isBusinessScopedUserId,
   isRecipientNotAllowedError,
   isValidE164,
   looksLikePhoneIdentity,
@@ -8,6 +9,35 @@ import {
   phonesMatch,
   sanitizePhoneForMeta,
 } from "./phone-utils";
+
+describe("isBusinessScopedUserId", () => {
+  it("recognises the BSUID format Meta sends for username users", () => {
+    // Real value observed in a production webhook.
+    expect(isBusinessScopedUserId("CO.1864288164544096")).toBe(true);
+    expect(isBusinessScopedUserId("US.13491208655302741918")).toBe(true);
+    // Parent BSUIDs carry an extra ENT segment.
+    expect(isBusinessScopedUserId("US.ENT.11815799212886844830")).toBe(true);
+  });
+
+  it("does not mistake a phone number for a BSUID", () => {
+    // Getting this wrong would route a normal contact through the
+    // `recipient` field and break every classic send.
+    expect(isBusinessScopedUserId("573108694208")).toBe(false);
+    expect(isBusinessScopedUserId("+57 310 869 4208")).toBe(false);
+    expect(isBusinessScopedUserId("")).toBe(false);
+  });
+
+  it("is mutually exclusive with looksLikePhoneIdentity", () => {
+    for (const id of ["CO.1864288164544096", "US.ENT.118157992128868"]) {
+      expect(isBusinessScopedUserId(id)).toBe(true);
+      expect(looksLikePhoneIdentity(id)).toBe(false);
+    }
+    for (const id of ["573108694208", "+1 (415) 555-1212"]) {
+      expect(isBusinessScopedUserId(id)).toBe(false);
+      expect(looksLikePhoneIdentity(id)).toBe(true);
+    }
+  });
+});
 
 describe("looksLikePhoneIdentity", () => {
   it("accepts the numeric wa_id values Meta has always sent", () => {
