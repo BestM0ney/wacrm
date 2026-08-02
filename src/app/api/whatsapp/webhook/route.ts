@@ -171,6 +171,37 @@ export async function GET(request: Request) {
   }
 }
 
+/**
+ * Dump the full webhook payload Meta delivered, for diagnosing what
+ * actually arrives per chat (identity fields, message shapes, fields
+ * Meta added that this code doesn't read yet).
+ *
+ * OFF unless `WHATSAPP_WEBHOOK_DEBUG=true`, and deliberately so: the
+ * payload contains **customer message content and phone numbers**, so
+ * leaving it on writes your customers' conversations into the server
+ * log. Turn it on to investigate, read what you need, turn it back off.
+ * It's an env var rather than a code change so flipping it doesn't need
+ * a redeploy on hosts that let you edit env vars and restart.
+ *
+ * Not a NEXT_PUBLIC_ var on purpose — this must never reach the browser
+ * bundle.
+ *
+ * Called only AFTER the signature check passes, so a spoofed request
+ * can't use it to flood the log.
+ */
+function logRawWebhookPayload(rawBody: string) {
+  if (process.env.WHATSAPP_WEBHOOK_DEBUG !== 'true') return
+  let pretty = rawBody
+  try {
+    pretty = JSON.stringify(JSON.parse(rawBody), null, 2)
+  } catch {
+    // Not JSON — log the raw bytes rather than nothing.
+  }
+  console.log(
+    '[webhook][debug] Meta payload (WHATSAPP_WEBHOOK_DEBUG=true):\n' + pretty,
+  )
+}
+
 // POST - Receive messages
 export async function POST(request: Request) {
   // Read raw body first so we can HMAC-verify the exact bytes Meta
@@ -185,6 +216,10 @@ export async function POST(request: Request) {
     console.warn('[webhook] rejected request with invalid signature')
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
+
+  // Opt-in, verified-payload-only diagnostic. No-op unless the env var
+  // is set, so production stays quiet by default.
+  logRawWebhookPayload(rawBody)
 
   let body: { entry?: WhatsAppWebhookEntry[] }
   try {
