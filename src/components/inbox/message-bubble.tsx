@@ -14,11 +14,18 @@ import {
   ImageOff,
   CornerDownLeft,
   Sparkles,
+  X,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
 import { InteractivePreview } from "@/components/interactive/interactive-preview";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useTranslations } from "next-intl";
 
 interface MessageBubbleProps {
@@ -60,6 +67,8 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [zoomed, setZoomed] = useState(false);
+  const tBubble = useTranslations("Inbox.bubble");
 
   const loadImage = useCallback(async () => {
     if (!url) return;
@@ -110,12 +119,53 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   }
 
   return (
-    <img
-      src={src ?? ""}
-      alt={alt}
-      className="max-h-64 max-w-60 rounded-lg object-cover"
-      onError={() => setError(true)}
-    />
+    <>
+      {/* The thumbnail is `object-cover`, so a tall or wide photo is
+          cropped in the bubble — tapping opens the full frame. A button
+          rather than a bare <img onClick> so it's keyboard-reachable and
+          announced as activatable. */}
+      <button
+        type="button"
+        onClick={() => setZoomed(true)}
+        className="block cursor-zoom-in rounded-lg transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+        aria-label={alt}
+      >
+        <img
+          src={src ?? ""}
+          alt={alt}
+          className="max-h-64 max-w-60 rounded-lg object-cover"
+          onError={() => setError(true)}
+        />
+      </button>
+
+      <Dialog open={zoomed} onOpenChange={setZoomed}>
+        {/* Overrides the default small, padded dialog: a viewer wants the
+            image as large as the viewport allows, with no card chrome
+            around it. `object-contain` shows the whole photo instead of
+            cropping it like the thumbnail does. */}
+        <DialogContent
+          showCloseButton={false}
+          className="w-auto max-w-[95vw] border-0 bg-transparent p-0 ring-0 sm:max-w-[90vw]"
+        >
+          <DialogTitle className="sr-only">{alt}</DialogTitle>
+          <img
+            src={src ?? ""}
+            alt={alt}
+            className="max-h-[85vh] w-auto max-w-full rounded-lg object-contain"
+          />
+          {/* The built-in close button is `ghost`, so on this transparent
+              panel it inherits the page foreground and can vanish against
+              a photo or the dark overlay. Fixed dark chip instead, which
+              reads in both themes and over any image. */}
+          <DialogClose
+            aria-label={tBubble("closeImage")}
+            className="absolute top-2 right-2 flex size-8 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-black/80 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+          >
+            <X className="size-4" />
+          </DialogClose>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
