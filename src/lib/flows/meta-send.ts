@@ -10,11 +10,9 @@ import {
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import { resolveContactRecipient } from '@/lib/whatsapp/recipient'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -69,17 +67,20 @@ export async function engineSendText(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    // `wa_id` matters here: a contact who reached us from a WhatsApp
+    // username has no phone, and selecting only `phone` made this bail
+    // before sending — flows silently did nothing for those customers.
+    .select('id, phone, wa_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`)
+  const target = resolveContactRecipient(contact)
+  if (!target) {
+    throw new Error(`contact ${contact.id} has no phone number or WhatsApp ID`)
   }
 
   const { data: config, error: configErr } = await db
@@ -103,8 +104,8 @@ export async function engineSendText(
     return r.messageId
   }
 
-  const variants = phoneVariants(sanitized)
-  let workingPhone = sanitized
+  const variants = target.variants
+  let workingPhone = target.value
   let waMessageId = ''
   let lastError: unknown = null
   for (const v of variants) {
@@ -121,7 +122,8 @@ export async function engineSendText(
   }
   if (lastError) throw lastError
 
-  if (workingPhone !== sanitized) {
+  // Only persist a corrected PHONE — never write a BSUID into `phone`.
+  if (target.isPhone && workingPhone !== target.value) {
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 
@@ -179,17 +181,20 @@ export async function engineSendMedia(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    // `wa_id` matters here: a contact who reached us from a WhatsApp
+    // username has no phone, and selecting only `phone` made this bail
+    // before sending — flows silently did nothing for those customers.
+    .select('id, phone, wa_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`)
+  const target = resolveContactRecipient(contact)
+  if (!target) {
+    throw new Error(`contact ${contact.id} has no phone number or WhatsApp ID`)
   }
 
   const { data: config, error: configErr } = await db
@@ -216,8 +221,8 @@ export async function engineSendMedia(
     return r.messageId
   }
 
-  const variants = phoneVariants(sanitized)
-  let workingPhone = sanitized
+  const variants = target.variants
+  let workingPhone = target.value
   let waMessageId = ''
   let lastError: unknown = null
   for (const v of variants) {
@@ -234,7 +239,8 @@ export async function engineSendMedia(
   }
   if (lastError) throw lastError
 
-  if (workingPhone !== sanitized) {
+  // Only persist a corrected PHONE — never write a BSUID into `phone`.
+  if (target.isPhone && workingPhone !== target.value) {
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 
@@ -331,17 +337,19 @@ async function sendInteractiveViaMeta(
   // Migration 017 moved both tables to account-scoped tenancy.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    // See the sibling senders above: `wa_id` is what makes a
+    // username-based contact reachable at all.
+    .select('id, phone, wa_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`)
+  const target = resolveContactRecipient(contact)
+  if (!target) {
+    throw new Error(`contact ${contact.id} has no phone number or WhatsApp ID`)
   }
 
   const { data: config, error: configErr } = await db
@@ -384,8 +392,8 @@ async function sendInteractiveViaMeta(
   // Same phone-variant retry as automations/meta-send.ts. Numbers
   // registered with/without a trunk 0 + Meta's sandbox quirks all
   // need this to reliably land a message.
-  const variants = phoneVariants(sanitized)
-  let workingPhone = sanitized
+  const variants = target.variants
+  let workingPhone = target.value
   let waMessageId = ''
   let lastError: unknown = null
   for (const v of variants) {
@@ -402,7 +410,8 @@ async function sendInteractiveViaMeta(
   }
   if (lastError) throw lastError
 
-  if (workingPhone !== sanitized) {
+  // Only persist a corrected PHONE — never write a BSUID into `phone`.
+  if (target.isPhone && workingPhone !== target.value) {
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 

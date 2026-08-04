@@ -36,12 +36,8 @@ import {
 } from '@/lib/whatsapp/interactive';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
-import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
-  isRecipientNotAllowedError,
-} from '@/lib/whatsapp/phone-utils';
+import { isRecipientNotAllowedError } from '@/lib/whatsapp/phone-utils';
+import { resolveContactRecipient } from '@/lib/whatsapp/recipient';
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 
@@ -244,11 +240,8 @@ export async function sendMessageToConversation(
    * Before this, an empty phone meant a hard "Contact phone number not
    * found" and there was no way to answer such a customer at all.
    */
-  const sanitizedPhone = sanitizePhoneForMeta(contact?.phone ?? '');
-  const hasUsablePhone = isValidE164(sanitizedPhone);
-  const waId = String(contact?.wa_id ?? '').trim();
-
-  if (!hasUsablePhone && !waId) {
+  const target = resolveContactRecipient(contact);
+  if (!target) {
     throw new SendMessageError(
       'bad_request',
       contact?.phone
@@ -258,7 +251,9 @@ export async function sendMessageToConversation(
     );
   }
 
-  const recipient = hasUsablePhone ? sanitizedPhone : waId;
+  const sanitizedPhone = target.isPhone ? target.value : '';
+  const hasUsablePhone = target.isPhone;
+  const recipient = target.value;
 
   // WhatsApp config, account-scoped.
   const { data: config, error: configError } = await db
@@ -417,7 +412,7 @@ export async function sendMessageToConversation(
     // Variants are trunk-prefix permutations of a phone number. A
     // wa_id is an opaque identifier — permuting its digits would just
     // address a different person — so it gets exactly one attempt.
-    const variants = hasUsablePhone ? phoneVariants(sanitizedPhone) : [waId];
+    const variants = target.variants;
     let lastError: unknown = null;
 
     for (const variant of variants) {

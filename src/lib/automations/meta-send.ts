@@ -5,12 +5,8 @@ import {
   engineSendInteractiveList,
 } from '@/lib/flows/meta-send'
 import { decrypt } from '@/lib/whatsapp/encryption'
-import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
-  isRecipientNotAllowedError,
-} from '@/lib/whatsapp/phone-utils'
+import { isRecipientNotAllowedError } from '@/lib/whatsapp/phone-utils'
+import { resolveContactRecipient } from '@/lib/whatsapp/recipient'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -118,17 +114,22 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // new tenancy column.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    // `wa_id` is required here: a contact who reached us from a
+    // WhatsApp username has no phone, and selecting only `phone` made
+    // this bail before sending — automations appeared not to fire.
+    .select('id, phone, wa_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
-  const sanitized = sanitizePhoneForMeta(contact.phone)
-  if (!isValidE164(sanitized)) {
-    throw new Error(`contact phone invalid: ${contact.phone}`)
+  const target = resolveContactRecipient(contact)
+  if (!target) {
+    throw new Error(
+      `contact ${contact.id} has no phone number or WhatsApp ID`,
+    )
   }
 
   const { data: config, error: configErr } = await db
@@ -163,11 +164,11 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     return r.messageId
   }
 
-  // Same phone-variant retry as /api/whatsapp/send — Meta sandbox and
-  // numbers registered with/without a trunk 0 both require this to
-  // reliably land a message.
-  const variants = phoneVariants(sanitized)
-  let workingPhone = sanitized
+  // Same retry as /api/whatsapp/send — Meta sandbox and numbers
+  // registered with/without a trunk 0 both require this to reliably
+  // land a message. A BSUID resolves to a single variant.
+  const variants = target.variants
+  let workingPhone = target.value
   let waMessageId = ''
   let lastError: unknown = null
   for (const v of variants) {
@@ -184,7 +185,9 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   }
   if (lastError) throw lastError
 
-  if (workingPhone !== sanitized) {
+  // Only persist a corrected PHONE. Writing a BSUID into `phone` would
+  // fabricate a number that was never real.
+  if (target.isPhone && workingPhone !== target.value) {
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 
