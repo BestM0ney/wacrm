@@ -287,7 +287,7 @@
       "customFieldsBtn": "커스텀 필드",
       "importBtn": "가져오기",
       "addContactBtn": "연락처 추가",
-      "searchPlaceholder": "이름, 전화번호, 이메일로 검색...",
+      "searchPlaceholder": "이름, 전화번호, 이메일 또는 @사용자명으로 검색...",
       "filterByTags": "태그로 필터링",
       "clearAll": "모두 지우기",
       "noTagsYet": "아직 태그가 없습니다.",
@@ -300,7 +300,8 @@
         "email": "이메일",
         "company": "회사",
         "tags": "태그",
-        "createdAt": "생성일"
+        "createdAt": "생성일",
+        "username": "@사용자명"
       },
       "loading": "연락처를 불러오는 중...",
       "noContactsMatch": "필터와 일치하는 연락처가 없습니다.",
