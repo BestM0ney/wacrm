@@ -8,6 +8,7 @@ import type { Contact, Deal, ContactNote, Tag } from "@/types";
 import { addContactTag, deleteContactTag } from "@/lib/contacts/tag-api";
 import {
   Phone,
+  AtSign,
   Mail,
   Copy,
   Check,
@@ -219,18 +220,42 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
           {/* Phone */}
           <div className="mt-4 space-y-2">
-            <button
-              onClick={handleCopyPhone}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
-            >
-              <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="flex-1 text-left">{contact.phone}</span>
-              {copied ? (
-                <Check className="h-3 w-3 text-primary" />
-              ) : (
-                <Copy className="h-3 w-3 text-muted-foreground" />
-              )}
-            </button>
+            {/* A contact who reached us from a WhatsApp username has no
+                number, so this row would render an empty line with a
+                copy button that copies nothing. Show it only when there
+                is something to show. */}
+            {contact.phone && (
+              <button
+                onClick={handleCopyPhone}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <Phone className="h-4 w-4 text-muted-foreground" />
+                <span className="flex-1 text-left">{contact.phone}</span>
+                {copied ? (
+                  <Check className="h-3 w-3 text-primary" />
+                ) : (
+                  <Copy className="h-3 w-3 text-muted-foreground" />
+                )}
+              </button>
+            )}
+
+            {/* The WhatsApp handle. For a username-only contact this is
+                the only human-readable way to tell who they are — the
+                stored identity is an opaque BSUID. */}
+            {contact.username && (
+              <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground">
+                <AtSign className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="truncate">{contact.username}</span>
+              </div>
+            )}
+
+            {/* Neither a number nor a handle: say so, rather than
+                leaving a blank card that looks broken. */}
+            {!contact.phone && !contact.username && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">
+                {tSidebar("noPhoneOrUsername")}
+              </p>
+            )}
 
             {contact.email && (
               <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground">

@@ -771,6 +771,9 @@ async function processMessage(
   const contactName =
     contact.profile?.name ||
     (contact.profile?.username ? `@${contact.profile.username}` : '')
+  // Display handle, stored without the leading @. Users can change it,
+  // so it's refreshed on every message — never used for identity.
+  const username = (contact.profile?.username ?? '').trim()
 
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
@@ -778,7 +781,8 @@ async function processMessage(
     configOwnerUserId,
     senderPhone,
     contactName,
-    waId
+    waId,
+    username
   )
   if (!contactOutcome) return
   const contactRecord = contactOutcome.contact
@@ -1212,7 +1216,8 @@ async function findOrCreateContact(
   configOwnerUserId: string,
   phone: string,
   name: string,
-  waId: string
+  waId: string,
+  username: string
 ): Promise<ContactOutcome | null> {
   // 1) By WhatsApp identity. Tried first because it's exact and works
   //    for senders with no number at all.
@@ -1245,6 +1250,11 @@ async function findOrCreateContact(
     // message resolves through the exact lookup above. This is also
     // what upgrades pre-037 rows in place, one message at a time.
     if (waId && !existingContact.wa_id) patch.wa_id = waId
+    // Unlike wa_id, the handle is refreshed whenever it changes — Meta
+    // lets users rename themselves and the inbox should follow.
+    if (username && username !== existingContact.username) {
+      patch.username = username
+    }
 
     if (Object.keys(patch).length > 0) {
       patch.updated_at = new Date().toISOString()
@@ -1274,6 +1284,7 @@ async function findOrCreateContact(
       user_id: configOwnerUserId,
       phone,
       wa_id: waId || null,
+      username: username || null,
       // `phone` is '' for a username-based sender, so fall back to the
       // identity rather than labelling the contact with an empty string.
       name: name || phone || waId,
